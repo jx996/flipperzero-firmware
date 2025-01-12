@@ -1,6 +1,7 @@
 #pragma once
 
 #include "base.h"
+#include "public_api.h"
 
 #define SUBGHZ_PROTOCOL_BIN_RAW_NAME "BinRAW"
 
@@ -28,9 +29,10 @@ void subghz_protocol_encoder_bin_raw_free(void* context);
  * Deserialize and generating an upload to send.
  * @param context Pointer to a SubGhzProtocolEncoderBinRAW instance
  * @param flipper_format Pointer to a FlipperFormat instance
- * @return true On success
+ * @return status
  */
-bool subghz_protocol_encoder_bin_raw_deserialize(void* context, FlipperFormat* flipper_format);
+SubGhzProtocolStatus
+    subghz_protocol_encoder_bin_raw_deserialize(void* context, FlipperFormat* flipper_format);
 
 /**
  * Forced transmission stop.
@@ -79,18 +81,14 @@ void subghz_protocol_decoder_bin_raw_feed(void* context, bool level, uint32_t du
  */
 uint8_t subghz_protocol_decoder_bin_raw_get_hash_data(void* context);
 
-void subghz_protocol_decoder_bin_raw_data_input_rssi(
-    SubGhzProtocolDecoderBinRAW* instance,
-    float rssi);
-
 /**
  * Serialize data SubGhzProtocolDecoderBinRAW.
  * @param context Pointer to a SubGhzProtocolDecoderBinRAW instance
  * @param flipper_format Pointer to a FlipperFormat instance
  * @param preset The modulation on which the signal was received, SubGhzRadioPreset
- * @return true On success
+ * @return status
  */
-bool subghz_protocol_decoder_bin_raw_serialize(
+SubGhzProtocolStatus subghz_protocol_decoder_bin_raw_serialize(
     void* context,
     FlipperFormat* flipper_format,
     SubGhzRadioPreset* preset);
@@ -99,9 +97,10 @@ bool subghz_protocol_decoder_bin_raw_serialize(
  * Deserialize data SubGhzProtocolDecoderBinRAW.
  * @param context Pointer to a SubGhzProtocolDecoderBinRAW instance
  * @param flipper_format Pointer to a FlipperFormat instance
- * @return true On success
+ * @return status
  */
-bool subghz_protocol_decoder_bin_raw_deserialize(void* context, FlipperFormat* flipper_format);
+SubGhzProtocolStatus
+    subghz_protocol_decoder_bin_raw_deserialize(void* context, FlipperFormat* flipper_format);
 
 /**
  * Getting a textual representation of the received data.

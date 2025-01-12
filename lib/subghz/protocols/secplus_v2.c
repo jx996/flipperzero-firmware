@@ -13,12 +13,12 @@
 * https://github.com/merbanan/rtl_433/blob/master/src/devices/secplus_v2.c
 */
 
-#define TAG "SubGhzProtocoSecPlus_v2"
+#define TAG "SubGhzProtocoSecPlusV2"
 
-#define SECPLUS_V2_HEADER 0x3C0000000000
+#define SECPLUS_V2_HEADER      0x3C0000000000
 #define SECPLUS_V2_HEADER_MASK 0xFFFF3C0000000000
-#define SECPLUS_V2_PACKET_1 0x000000000000
-#define SECPLUS_V2_PACKET_2 0x010000000000
+#define SECPLUS_V2_PACKET_1    0x000000000000
+#define SECPLUS_V2_PACKET_2    0x010000000000
 #define SECPLUS_V2_PACKET_MASK 0x30000000000
 
 static const SubGhzBlockConst subghz_protocol_secplus_v2_const = {
@@ -380,7 +380,6 @@ static void subghz_protocol_secplus_v2_encode(SubGhzProtocolEncoderSecPlus_v2* i
     uint8_t roll_2[9] = {0};
 
     instance->generic.cnt++;
-    //ToDo it is not known what value the counter starts
     if(instance->generic.cnt > 0xFFFFFFF) instance->generic.cnt = 0xE500000;
     uint32_t rolling = subghz_protocol_blocks_reverse_key(instance->generic.cnt, 28);
 
@@ -503,24 +502,24 @@ static void
     instance->encoder.size_upload = index;
 }
 
-bool subghz_protocol_encoder_secplus_v2_deserialize(void* context, FlipperFormat* flipper_format) {
+SubGhzProtocolStatus
+    subghz_protocol_encoder_secplus_v2_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
     SubGhzProtocolEncoderSecPlus_v2* instance = context;
-    bool res = false;
+    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
     do {
-        if(!subghz_block_generic_deserialize(&instance->generic, flipper_format)) {
-            FURI_LOG_E(TAG, "Deserialize error");
-            break;
-        }
-        if(instance->generic.data_count_bit !=
-           subghz_protocol_secplus_v2_const.min_count_bit_for_found) {
-            FURI_LOG_E(TAG, "Wrong number of bits in key");
+        ret = subghz_block_generic_deserialize_check_count_bit(
+            &instance->generic,
+            flipper_format,
+            subghz_protocol_secplus_v2_const.min_count_bit_for_found);
+        if(ret != SubGhzProtocolStatusOk) {
             break;
         }
         uint8_t key_data[sizeof(uint64_t)] = {0};
         if(!flipper_format_read_hex(
                flipper_format, "Secplus_packet_1", key_data, sizeof(uint64_t))) {
             FURI_LOG_E(TAG, "Secplus_packet_1");
+            ret = SubGhzProtocolStatusErrorParserOthers;
             break;
         }
         for(uint8_t i = 0; i < sizeof(uint64_t); i++) {
@@ -541,6 +540,7 @@ bool subghz_protocol_encoder_secplus_v2_deserialize(void* context, FlipperFormat
         }
         if(!flipper_format_update_hex(flipper_format, "Key", key_data, sizeof(uint64_t))) {
             FURI_LOG_E(TAG, "Unable to add Key");
+            ret = SubGhzProtocolStatusErrorParserKey;
             break;
         }
 
@@ -550,15 +550,14 @@ bool subghz_protocol_encoder_secplus_v2_deserialize(void* context, FlipperFormat
         if(!flipper_format_update_hex(
                flipper_format, "Secplus_packet_1", key_data, sizeof(uint64_t))) {
             FURI_LOG_E(TAG, "Unable to add Secplus_packet_1");
+            ret = SubGhzProtocolStatusErrorParserOthers;
             break;
         }
 
         instance->encoder.is_running = true;
-
-        res = true;
     } while(false);
 
-    return res;
+    return ret;
 }
 
 void subghz_protocol_encoder_secplus_v2_stop(void* context) {
@@ -591,7 +590,8 @@ bool subghz_protocol_secplus_v2_create_data(
     uint8_t btn,
     uint32_t cnt,
     SubGhzRadioPreset* preset) {
-    furi_assert(context);
+    furi_check(context);
+
     SubGhzProtocolEncoderSecPlus_v2* instance = context;
     instance->generic.serial = serial;
     instance->generic.cnt = cnt;
@@ -599,19 +599,20 @@ bool subghz_protocol_secplus_v2_create_data(
     instance->generic.data_count_bit =
         (uint8_t)subghz_protocol_secplus_v2_const.min_count_bit_for_found;
     subghz_protocol_secplus_v2_encode(instance);
-    bool res = subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
+    SubGhzProtocolStatus res =
+        subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
 
     uint8_t key_data[sizeof(uint64_t)] = {0};
     for(size_t i = 0; i < sizeof(uint64_t); i++) {
         key_data[sizeof(uint64_t) - i - 1] = (instance->secplus_packet_1 >> (i * 8)) & 0xFF;
     }
 
-    if(res &&
+    if((res == SubGhzProtocolStatusOk) &&
        !flipper_format_write_hex(flipper_format, "Secplus_packet_1", key_data, sizeof(uint64_t))) {
         FURI_LOG_E(TAG, "Unable to add Secplus_packet_1");
-        res = false;
+        res = SubGhzProtocolStatusErrorParserOthers;
     }
-    return res;
+    return res == SubGhzProtocolStatusOk;
 }
 
 void* subghz_protocol_decoder_secplus_v2_alloc(SubGhzEnvironment* environment) {
@@ -754,58 +755,59 @@ uint8_t subghz_protocol_decoder_secplus_v2_get_hash_data(void* context) {
         &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
 }
 
-bool subghz_protocol_decoder_secplus_v2_serialize(
+SubGhzProtocolStatus subghz_protocol_decoder_secplus_v2_serialize(
     void* context,
     FlipperFormat* flipper_format,
     SubGhzRadioPreset* preset) {
     furi_assert(context);
     SubGhzProtocolDecoderSecPlus_v2* instance = context;
-    bool res = subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
+    SubGhzProtocolStatus ret =
+        subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
 
     uint8_t key_data[sizeof(uint64_t)] = {0};
     for(size_t i = 0; i < sizeof(uint64_t); i++) {
         key_data[sizeof(uint64_t) - i - 1] = (instance->secplus_packet_1 >> (i * 8)) & 0xFF;
     }
 
-    if(res &&
+    if((ret == SubGhzProtocolStatusOk) &&
        !flipper_format_write_hex(flipper_format, "Secplus_packet_1", key_data, sizeof(uint64_t))) {
         FURI_LOG_E(TAG, "Unable to add Secplus_packet_1");
-        res = false;
+        ret = SubGhzProtocolStatusErrorParserOthers;
     }
-    return res;
+    return ret;
 }
 
-bool subghz_protocol_decoder_secplus_v2_deserialize(void* context, FlipperFormat* flipper_format) {
+SubGhzProtocolStatus
+    subghz_protocol_decoder_secplus_v2_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
     SubGhzProtocolDecoderSecPlus_v2* instance = context;
-    bool res = false;
+    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
     do {
-        if(!subghz_block_generic_deserialize(&instance->generic, flipper_format)) {
-            FURI_LOG_E(TAG, "Deserialize error");
-            break;
-        }
-        if(instance->generic.data_count_bit !=
-           subghz_protocol_secplus_v2_const.min_count_bit_for_found) {
-            FURI_LOG_E(TAG, "Wrong number of bits in key");
+        ret = subghz_block_generic_deserialize_check_count_bit(
+            &instance->generic,
+            flipper_format,
+            subghz_protocol_secplus_v2_const.min_count_bit_for_found);
+        if(ret != SubGhzProtocolStatusOk) {
             break;
         }
         if(!flipper_format_rewind(flipper_format)) {
             FURI_LOG_E(TAG, "Rewind error");
+            ret = SubGhzProtocolStatusErrorParserOthers;
             break;
         }
         uint8_t key_data[sizeof(uint64_t)] = {0};
         if(!flipper_format_read_hex(
                flipper_format, "Secplus_packet_1", key_data, sizeof(uint64_t))) {
             FURI_LOG_E(TAG, "Missing Secplus_packet_1");
+            ret = SubGhzProtocolStatusErrorParserOthers;
             break;
         }
         for(uint8_t i = 0; i < sizeof(uint64_t); i++) {
             instance->secplus_packet_1 = instance->secplus_packet_1 << 8 | key_data[i];
         }
-        res = true;
     } while(false);
 
-    return res;
+    return ret;
 }
 
 void subghz_protocol_decoder_secplus_v2_get_string(void* context, FuriString* output) {

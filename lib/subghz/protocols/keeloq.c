@@ -122,7 +122,7 @@ static bool subghz_protocol_keeloq_gen_data(SubGhzProtocolEncoderKeeloq* instanc
     uint32_t fix = (uint32_t)btn << 28 | instance->generic.serial;
     uint32_t decrypt = (uint32_t)btn << 28 |
                        (instance->generic.serial & 0x3FF)
-                           << 16 | //ToDo in some protocols the discriminator is 0
+                           << 16 | // In some protocols the discriminator is 0
                        instance->generic.cnt;
     uint32_t hop = 0;
     uint64_t man = 0;
@@ -149,7 +149,8 @@ static bool subghz_protocol_keeloq_gen_data(SubGhzProtocolEncoderKeeloq* instanc
                     hop = subghz_protocol_keeloq_common_encrypt(decrypt, man);
                     break;
                 case KEELOQ_LEARNING_UNKNOWN:
-                    hop = 0; //todo
+                    //Invalid or missing encoding type in keeloq_mfcodes
+                    hop = 0;
                     break;
                 }
                 break;
@@ -174,7 +175,7 @@ bool subghz_protocol_keeloq_create_data(
     uint16_t cnt,
     const char* manufacture_name,
     SubGhzRadioPreset* preset) {
-    furi_assert(context);
+    furi_check(context);
     SubGhzProtocolEncoderKeeloq* instance = context;
     instance->generic.serial = serial;
     instance->generic.cnt = cnt;
@@ -182,7 +183,9 @@ bool subghz_protocol_keeloq_create_data(
     instance->generic.data_count_bit = 64;
     bool res = subghz_protocol_keeloq_gen_data(instance, btn);
     if(res) {
-        res = subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
+        if(subghz_block_generic_serialize(&instance->generic, flipper_format, preset) !=
+           SubGhzProtocolStatusOk)
+            res = false;
     }
     return res;
 }
@@ -197,9 +200,7 @@ static bool
     furi_assert(instance);
 
     //gen new key
-    if(subghz_protocol_keeloq_gen_data(instance, btn)) {
-        //ToDo if you need to add a callback to automatically update the data on the display
-    } else {
+    if(!subghz_protocol_keeloq_gen_data(instance, btn)) {
         return false;
     }
 
@@ -254,18 +255,17 @@ static bool
     return true;
 }
 
-bool subghz_protocol_encoder_keeloq_deserialize(void* context, FlipperFormat* flipper_format) {
+SubGhzProtocolStatus
+    subghz_protocol_encoder_keeloq_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
     SubGhzProtocolEncoderKeeloq* instance = context;
-    bool res = false;
+    SubGhzProtocolStatus ret = SubGhzProtocolStatusError;
     do {
-        if(!subghz_block_generic_deserialize(&instance->generic, flipper_format)) {
-            FURI_LOG_E(TAG, "Deserialize error");
-            break;
-        }
-        if(instance->generic.data_count_bit !=
-           subghz_protocol_keeloq_const.min_count_bit_for_found) {
-            FURI_LOG_E(TAG, "Wrong number of bits in key");
+        ret = subghz_block_generic_deserialize_check_count_bit(
+            &instance->generic,
+            flipper_format,
+            subghz_protocol_keeloq_const.min_count_bit_for_found);
+        if(ret != SubGhzProtocolStatusOk) {
             break;
         }
         subghz_protocol_keeloq_check_remote_controller(
@@ -273,6 +273,7 @@ bool subghz_protocol_encoder_keeloq_deserialize(void* context, FlipperFormat* fl
 
         if(strcmp(instance->manufacture_name, "DoorHan") != 0) {
             FURI_LOG_E(TAG, "Wrong manufacturer name");
+            ret = SubGhzProtocolStatusErrorParserOthers;
             break;
         }
 
@@ -280,10 +281,13 @@ bool subghz_protocol_encoder_keeloq_deserialize(void* context, FlipperFormat* fl
         flipper_format_read_uint32(
             flipper_format, "Repeat", (uint32_t*)&instance->encoder.repeat, 1);
 
-        if(!subghz_protocol_encoder_keeloq_get_upload(instance, instance->generic.btn)) break;
-
+        if(!subghz_protocol_encoder_keeloq_get_upload(instance, instance->generic.btn)) {
+            ret = SubGhzProtocolStatusErrorEncoderGetUpload;
+            break;
+        }
         if(!flipper_format_rewind(flipper_format)) {
             FURI_LOG_E(TAG, "Rewind error");
+            ret = SubGhzProtocolStatusErrorParserOthers;
             break;
         }
         uint8_t key_data[sizeof(uint64_t)] = {0};
@@ -292,15 +296,14 @@ bool subghz_protocol_encoder_keeloq_deserialize(void* context, FlipperFormat* fl
         }
         if(!flipper_format_update_hex(flipper_format, "Key", key_data, sizeof(uint64_t))) {
             FURI_LOG_E(TAG, "Unable to add Key");
+            ret = SubGhzProtocolStatusErrorParserKey;
             break;
         }
 
         instance->encoder.is_running = true;
-
-        res = true;
     } while(false);
 
-    return res;
+    return ret;
 }
 
 void subghz_protocol_encoder_keeloq_stop(void* context) {
@@ -463,6 +466,19 @@ static inline bool subghz_protocol_keeloq_check_decrypt(
     }
     return false;
 }
+// Centurion specific check
+static inline bool subghz_protocol_keeloq_check_decrypt_centurion(
+    SubGhzBlockGeneric* instance,
+    uint32_t decrypt,
+    uint8_t btn) {
+    furi_assert(instance);
+
+    if((decrypt >> 28 == btn) && ((((uint16_t)(decrypt >> 16)) & 0x3FF) == 0x1CE)) {
+        instance->cnt = decrypt & 0x0000FFFF;
+        return true;
+    }
+    return false;
+}
 
 /** 
  * Checking the accepted code against the database manafacture key
@@ -505,9 +521,16 @@ static uint8_t subghz_protocol_keeloq_check_remote_controller_selector(
                 // https://phreakerclub.com/forum/showpost.php?p=43557&postcount=37
                 man = subghz_protocol_keeloq_common_normal_learning(fix, manufacture_code->key);
                 decrypt = subghz_protocol_keeloq_common_decrypt(hop, man);
-                if(subghz_protocol_keeloq_check_decrypt(instance, decrypt, btn, end_serial)) {
-                    *manufacture_name = furi_string_get_cstr(manufacture_code->name);
-                    return 1;
+                if(strcmp(furi_string_get_cstr(manufacture_code->name), "Centurion") == 0) {
+                    if(subghz_protocol_keeloq_check_decrypt_centurion(instance, decrypt, btn)) {
+                        *manufacture_name = furi_string_get_cstr(manufacture_code->name);
+                        return 1;
+                    }
+                } else {
+                    if(subghz_protocol_keeloq_check_decrypt(instance, decrypt, btn, end_serial)) {
+                        *manufacture_name = furi_string_get_cstr(manufacture_code->name);
+                        return 1;
+                    }
                 }
                 break;
             case KEELOQ_LEARNING_SECURE:
@@ -669,7 +692,7 @@ uint8_t subghz_protocol_decoder_keeloq_get_hash_data(void* context) {
         &instance->decoder, (instance->decoder.decode_count_bit / 8) + 1);
 }
 
-bool subghz_protocol_decoder_keeloq_serialize(
+SubGhzProtocolStatus subghz_protocol_decoder_keeloq_serialize(
     void* context,
     FlipperFormat* flipper_format,
     SubGhzRadioPreset* preset) {
@@ -678,34 +701,24 @@ bool subghz_protocol_decoder_keeloq_serialize(
     subghz_protocol_keeloq_check_remote_controller(
         &instance->generic, instance->keystore, &instance->manufacture_name);
 
-    bool res = subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
+    SubGhzProtocolStatus res =
+        subghz_block_generic_serialize(&instance->generic, flipper_format, preset);
 
-    if(res && !flipper_format_write_string_cstr(
-                  flipper_format, "Manufacture", instance->manufacture_name)) {
+    if((res == SubGhzProtocolStatusOk) &&
+       !flipper_format_write_string_cstr(
+           flipper_format, "Manufacture", instance->manufacture_name)) {
         FURI_LOG_E(TAG, "Unable to add manufacture name");
-        res = false;
+        res = SubGhzProtocolStatusErrorParserOthers;
     }
     return res;
 }
 
-bool subghz_protocol_decoder_keeloq_deserialize(void* context, FlipperFormat* flipper_format) {
+SubGhzProtocolStatus
+    subghz_protocol_decoder_keeloq_deserialize(void* context, FlipperFormat* flipper_format) {
     furi_assert(context);
     SubGhzProtocolDecoderKeeloq* instance = context;
-    bool res = false;
-    do {
-        if(!subghz_block_generic_deserialize(&instance->generic, flipper_format)) {
-            FURI_LOG_E(TAG, "Deserialize error");
-            break;
-        }
-        if(instance->generic.data_count_bit !=
-           subghz_protocol_keeloq_const.min_count_bit_for_found) {
-            FURI_LOG_E(TAG, "Wrong number of bits in key");
-            break;
-        }
-        res = true;
-    } while(false);
-
-    return res;
+    return subghz_block_generic_deserialize_check_count_bit(
+        &instance->generic, flipper_format, subghz_protocol_keeloq_const.min_count_bit_for_found);
 }
 
 void subghz_protocol_decoder_keeloq_get_string(void* context, FuriString* output) {

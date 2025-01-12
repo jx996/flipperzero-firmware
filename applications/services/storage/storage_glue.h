@@ -8,7 +8,12 @@
 extern "C" {
 #endif
 
-typedef enum { ST_EXT = 0, ST_INT = 1, ST_ANY, ST_ERROR } StorageType;
+typedef enum {
+    ST_EXT = 0,
+    ST_INT = 1,
+    ST_ANY,
+    ST_ERROR
+} StorageType;
 
 typedef struct StorageData StorageData;
 
@@ -18,7 +23,6 @@ typedef struct {
 
 typedef struct {
     File* file;
-    StorageType type;
     void* file_data;
     FuriString* path;
 } StorageFile;
@@ -61,17 +65,15 @@ struct StorageData {
 };
 
 bool storage_has_file(const File* file, StorageData* storage_data);
-bool storage_path_already_open(FuriString* path, StorageFileList_t files);
+bool storage_path_already_open(FuriString* path, StorageData* storage_data);
 
 void storage_set_storage_file_data(const File* file, void* file_data, StorageData* storage);
 void* storage_get_storage_file_data(const File* file, StorageData* storage);
 
-void storage_push_storage_file(
-    File* file,
-    FuriString* path,
-    StorageType type,
-    StorageData* storage);
+void storage_push_storage_file(File* file, FuriString* path, StorageData* storage);
 bool storage_pop_storage_file(File* file, StorageData* storage);
+
+size_t storage_open_files_count(StorageData* storage);
 
 #ifdef __cplusplus
 }

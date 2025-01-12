@@ -11,6 +11,7 @@ typedef struct {
     const char* path;
     FS_AccessMode access_mode;
     FS_OpenMode open_mode;
+    FuriThreadId thread_id;
 } SADataFOpen;
 
 typedef struct {
@@ -34,6 +35,7 @@ typedef struct {
 typedef struct {
     File* file;
     const char* path;
+    FuriThreadId thread_id;
 } SADataDOpen;
 
 typedef struct {
@@ -46,18 +48,33 @@ typedef struct {
 typedef struct {
     const char* path;
     uint32_t* timestamp;
+    FuriThreadId thread_id;
 } SADataCTimestamp;
 
 typedef struct {
     const char* path;
     FileInfo* fileinfo;
+    FuriThreadId thread_id;
 } SADataCStat;
 
 typedef struct {
     const char* fs_path;
     uint64_t* total_space;
     uint64_t* free_space;
+    FuriThreadId thread_id;
 } SADataCFSInfo;
+
+typedef struct {
+    FuriString* path;
+    FuriThreadId thread_id;
+} SADataCResolvePath;
+
+typedef struct {
+    const char* path1;
+    const char* path2;
+    bool check_subdir;
+    FuriThreadId thread_id;
+} SADataCEquivPath;
 
 typedef struct {
     uint32_t id;
@@ -65,6 +82,7 @@ typedef struct {
 
 typedef struct {
     const char* path;
+    FuriThreadId thread_id;
 } SADataPath;
 
 typedef struct {
@@ -87,6 +105,8 @@ typedef union {
     SADataCTimestamp ctimestamp;
     SADataCStat cstat;
     SADataCFSInfo cfsinfo;
+    SADataCResolvePath cresolvepath;
+    SADataCEquivPath cequivpath;
 
     SADataError error;
 
@@ -128,6 +148,9 @@ typedef enum {
     StorageCommandSDUnmount,
     StorageCommandSDInfo,
     StorageCommandSDStatus,
+    StorageCommandCommonResolvePath,
+    StorageCommandSDMount,
+    StorageCommandCommonEquivalentPath,
 } StorageCommand;
 
 typedef struct {
